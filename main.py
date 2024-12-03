@@ -12,6 +12,7 @@ import bcrypt
 import random
 import pandas as pd
 import string
+from passlib.context import CryptContext
 
 app = FastAPI()
 
@@ -80,8 +81,8 @@ def get_db():
         db.close()
 
 def send_email(contact: ContactMessage):
-    sender_email = "universalsmarttimetable@gmail.com"  # Replace with your Gmail address
-    sender_password = "kyif abme qpyf wrsg"  # Replace with your App Password
+    sender_email = "universalsmarttimetable@gmail.com" 
+    sender_password = "kyif abme qpyf wrsg"  
     receiver_email = "sameergulsher0000@gmail.com"
 
     # Create the email content
@@ -97,8 +98,7 @@ def send_email(contact: ContactMessage):
 
     try:
         # Connect to the Gmail SMTP server and send the email
-        with smtplib.SMTP('smtp.gmail.com', 587) as server:
-            server.starttls()  # Upgrade to a secure connection
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465 ) as server:
             server.login(sender_email, sender_password)
             server.send_message(msg)
         return True
@@ -129,8 +129,7 @@ def send_dummy_password_email(receiver_email: str, dummy_password: str):
 
     try:
         # Connect to the Gmail SMTP server and send the email
-        with smtplib.SMTP('smtp.gmail.com', 587) as server:
-            server.starttls()  # Upgrade to a secure connection
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465 ) as server:
             server.login(sender_email, sender_password)
             server.send_message(msg)
         return True
@@ -165,8 +164,7 @@ def manager_send_dummy_password_email(receiver_email: str, dummy_password: str, 
 
     try:
         # Connect to the Gmail SMTP server and send the email
-        with smtplib.SMTP('smtp.gmail.com', 587) as server:
-            server.starttls()  # Upgrade to a secure connection
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465 ) as server:
             server.login(sender_email, sender_password)
             server.send_message(msg)
         return True
@@ -191,7 +189,7 @@ def send_message(contact: ContactMessage):
 #api for registering an admin
 @app.post("/register-institute/")
 def register_institute(institute_data: InstituteCreate, db: Session = Depends(get_db)):
-     # Check if the admin user already exists
+    # Check if the admin user already exists
     existing_admin = db.query(models.User).filter(models.User.email == institute_data.admin_email).first()
     if existing_admin:
         raise HTTPException(status_code=400, detail="Admin user already exists")
@@ -201,27 +199,31 @@ def register_institute(institute_data: InstituteCreate, db: Session = Depends(ge
         name=institute_data.name,
         # total_semesters=institute_data.total_semesters
     )
-    
     db.add(new_institute)
     db.commit()
     db.refresh(new_institute)
 
-    hashed_password = bcrypt.hashpw(institute_data.admin_password.encode('utf-8'), bcrypt.gensalt())
+    # Hash the password
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    hashed_password = pwd_context.hash(institute_data.admin_password)
+    print(f"Hashed Password: {hashed_password}")  # Debugging
 
+    # Create the admin user
     new_admin = models.User(
         institute_id=new_institute.id,
         name=institute_data.admin_name,
         email=institute_data.admin_email,
-        password=hashed_password.decode('utf-8'),
+        password=hashed_password,
         role=models.UserRole.admin,
         phone_number=institute_data.admin_phone_number
     )
+    print(new_admin.__dict__)  # Debugging
 
     db.add(new_admin)
     db.commit()
     db.refresh(new_admin)
 
-    return {"status": "success", "message": "Institute and admin user created successfully"} ### Summary of the API for Registering an Institute
+    return {"status": "success", "message": "Institute and admin user created successfully"}
 
 #admin login api
 @app.post("/admin-login/")
@@ -231,10 +233,11 @@ def admin_login(login_data: AdminLogin, db: Session = Depends(get_db)):
     # Check if the user exists
     if not admin_user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    # Verify the password
-    if not bcrypt.checkpw(login_data.password.encode('utf-8'), admin_user.password.encode('utf-8')):
-        raise HTTPException(status_code=401, detail="Invalid email")
-
+    # Check if the password is correct
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    if not pwd_context.verify(login_data.password, admin_user.password):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
     # If the credentials are valid, return a success message
     return {"status": "success", "message": "Login successful", "user_id": admin_user.id, "role": admin_user.role, "institute_id":admin_user.institute_id} ### Summary of the API for Admin Login
 
@@ -252,8 +255,7 @@ def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(get_db
     # Send the dummy password to the user's email
     if send_dummy_password_email(request.email, dummy_password):
         # Optionally, you can update the user's password in the database
-        hashed_password = bcrypt.hashpw(dummy_password.encode('utf-8'), bcrypt.gensalt())
-        admin_user.password = hashed_password.decode('utf-8')
+        admin_user.password = dummy_password
         db.commit()
         return {"status": "success", "message": "Dummy password sent to your email"}
     else:
@@ -284,8 +286,7 @@ def add_manager(manager_data: ManagerCreate, db: Session = Depends(get_db)):
 
     if manager_send_dummy_password_email(manager_data.email, dummy_password, manager_data.name):
         # Hash the dummy password before storing it in the database
-        hashed_password = bcrypt.hashpw(dummy_password.encode('utf-8'), bcrypt.gensalt())
-        new_manager.password = hashed_password.decode('utf-8')  # Update the password with the hashed version
+        new_manager.password = dummy_password
         db.commit()  # Commit the changes to the database
     else:
         raise HTTPException(status_code=500, detail="Failed to send email to the manager")
