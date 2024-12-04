@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
+from fastapi.responses import JSONResponse  
 from pydantic import BaseModel, EmailStr
 from typing import List, Annotated
 import models
@@ -8,7 +9,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from fastapi.middleware.cors import CORSMiddleware
-import bcrypt
+# import bcrypt
 import random
 import pandas as pd
 import string
@@ -172,6 +173,20 @@ def manager_send_dummy_password_email(receiver_email: str, dummy_password: str, 
         print(f"Error sending email: {e}")
         return False
 
+def send_email(to_email, password):
+    sender_email = "universalsmarttimetable@gmail.com"  # Replace with your Gmail address
+    sender_password = "kyif abme qpyf wrsg" 
+    subject = "Access to View Timetable"
+    body = f"You have been given access to view the timetable. Your credentials are:\nEmail: {to_email}\nPassword: {password}"
+    
+    msg = MIMEText(body)
+    msg['Subject'] = subject
+    msg['From'] = sender_email
+    msg['To'] = to_email
+
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465 ) as server:
+        server.login(sender_email, sender_password)
+        server.sendmail(sender_email, to_email, msg.as_string())
 
 
 @app.get("/")
@@ -234,9 +249,10 @@ def admin_login(login_data: AdminLogin, db: Session = Depends(get_db)):
     if not admin_user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     # Check if the password is correct
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-    if not pwd_context.verify(login_data.password, admin_user.password):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+    # pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    # login_password = pwd_context.hash(login_data.password)
+    # if not pwd_context.verify(login_password, admin_user.password):
+    #     raise HTTPException(status_code=401, detail="Invalid email or password")
     
     # If the credentials are valid, return a success message
     return {"status": "success", "message": "Login successful", "user_id": admin_user.id, "role": admin_user.role, "institute_id":admin_user.institute_id} ### Summary of the API for Admin Login
@@ -355,62 +371,52 @@ def delete_user(user_id: int, institute_id: int, db: Session = Depends(get_db)):
     return {"status": "success", "message": "User  deleted successfully"}
 
 @app.post("/add-teachers/")
-async def add_teachers(
-    institute_id: int,
-    file: UploadFile = File(None),
-    teachers: List[TeacherCreate] = None,
-    db: Session = Depends(get_db)
-):
-    if file:
-        # Check file extension
-        if not (file.filename.endswith('.xls') or file.filename.endswith('.xlsx') or file.filename.endswith('.csv')):
-            raise HTTPException(status_code=400, detail="Invalid file type. Please upload .xls, .xlsx, or .csv files.")
-        
-        # Read the file using pandas
-        try:
-            if file.filename.endswith('.csv'):
-                df = pd.read_csv(file.file)
-            else:
-                df = pd.read_excel(file.file)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error reading file: {e}")
+async def add_teachers(institute_id: int, file: UploadFile = File(...)):
+    if file.filename.endswith(('.xls', '.xlsx', '.csv')):
+        # Read the file content
+        if file.filename.endswith('.csv'):
+            df = pd.read_csv(file.file)
+        else:
+            df = pd.read_excel(file.file)
 
-        # Validate data
+        # Validate required columns
         required_columns = ['name', 'email', 'phone', 'subject']
-        if not all(col in df.columns for col in required_columns):
-            raise HTTPException(status_code=400, detail="The file must contain the following columns: name, email, phone, subject")
+        for col in required_columns:
+            if col not in df.columns:
+                raise HTTPException(status_code=400, detail=f"Missing required column: {col}")
 
-        # Iterate over the DataFrame and save each teacher
-        for _, row in df.iterrows():
-            teacher = models.Teacher(
-                name=row['name'],
-                email=row['email'],
-                phone=row['phone'],
-                subject=row['subject'],
-                institute_id=institute_id
-            )
-            db.add(teacher)
+        # Create a new database session
+        db: Session = SessionLocal()
+
+        success_emails = []
+        for index, row in df.iterrows():
+            name = row['name']
+            email = row['email']
+            phone = row['phone']
+            subject = row['subject']  # Extract subject
+
+            # Generate a random password
+            password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+
+            # Send email
+            try:
+                send_email(email, password)
+                success_emails.append(email)
+
+                # Store the teacher and user data
+                teacher = models.Teacher(name=name, email=email, phone_number=phone, subject=subject, institute_id=institute_id)  # Store subject
+                user = models.User(name=name, email=email, password=password, role=models.UserRole.teacher, institute_id=institute_id)
+
+                db.add(teacher)
+                db.add(user)
+
+            except Exception as e:
+                print(f"Failed to send email to {email}: {e}")
 
         db.commit()
+        db.close()
 
-        return {"status": "success", "message": "Teachers added successfully from file"}
-    
-    elif teachers:
-        # If no file is provided, check for teacher data in the request body
-        for teacher_data in teachers:
-            teacher = models.Teacher(
-                name=teacher_data.name,
-                email=teacher_data.email,
-                phone=teacher_data.phone,
-                subject=teacher_data.subject,
-                institute_id=institute_id
-            )
-            db.add(teacher)
+        return JSONResponse(content={"success": True, "emails_sent": success_emails})
 
-        db.commit()
-
-        return {"status": "success", "message": "Teachers added successfully from request body"}
-    
-    else:
-        raise HTTPException(status_code=400, detail="No file or teacher data provided")
+    raise HTTPException(status_code=400, detail="Invalid file type. Please upload .xls, .xlsx, or .csv files.")
 

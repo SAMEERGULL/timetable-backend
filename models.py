@@ -10,6 +10,8 @@ Base = declarative_base()
 class UserRole(enum.Enum):
     admin = "admin"
     manager = "manager"
+    teacher = "teacher"
+    student = "student"
 
 # Institute model
 class Institute(Base):
@@ -91,6 +93,7 @@ class Teacher(Base):
     name = Column(String)
     email = Column(String, unique=True, index=True)
     phone_number = Column(String)
+    role = Column(Enum(UserRole), default=UserRole.teacher)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
