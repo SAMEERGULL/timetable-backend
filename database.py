@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from models import Base
 
 # Database configuration
-DATABASE_URL = 'postgresql://postgres:1234@localhost:5432/timetable' # Change this to your desired database URL
+DATABASE_URL = 'postgresql://postgres:1234@localhost:5432/timetable' 
 
 # Create the database engine
 engine = create_engine(DATABASE_URL)
